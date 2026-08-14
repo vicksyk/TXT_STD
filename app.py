@@ -4,6 +4,12 @@ This reproduces relationships that can be proven from the supplied sample.
 For exact Fortran parity, populate the operation/rule configuration from the
 Fortran source, lookup tables, or additional validated input/output pairs.
 """
+import streamlit as st
+
+st.title("TXT STD Calculator")
+
+st.write("My First Streamlit Application")
+
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
