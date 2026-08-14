@@ -838,8 +838,6 @@ st.dataframe(
     use_container_width=True,
     hide_index=True
 )
-content
-        )
 
         profile, validated_profile = get_profile(
             header["Nest Number"]
