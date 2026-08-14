@@ -64,7 +64,7 @@ VALIDATED_PROFILES = {
 # ============================================================
 
 def split_fields(line: str) -> list:
-"""Split a whitespace-delimited TXT row."""
+    """Split a whitespace-delimited TXT row."""
     return re.split(r"\s+", line.strip())
 
 
@@ -467,7 +467,7 @@ def format_allocated_section(
     title: str,
     result_df: pd.DataFrame
 ) -> list:
-"""Create one allocated-results report section."""
+    """Create one allocated-results report section."""
 
     lines = [
         "",
