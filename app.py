@@ -847,6 +847,36 @@ content
                 )
             )
 
+result_143007.style.format({
+    "Finish Weight": "{:.2f}",
+    "D-Time": "{:.3f}",
+    "R-Time": "{:.3f}",
+    "IDA": "{:.3f}",
+    "Total Per Piece": "{:.3f}",
+    "HRS/100": "{:.3f}",
+    "Rough Weight Pounds": "{:.2f}",
+    "Rough Weight KG": "{:.2f}",
+    "Total for Quantity": "{:.3f}",
+    "Total Pounds": "{:.2f}",
+    "Allocation Value": "{:.2f}",
+    "Allocation Base": "{:.2f}",
+})
+
+result_17033.style.format({
+    "Finish Weight": "{:.2f}",
+    "D-Time": "{:.3f}",
+    "R-Time": "{:.3f}",
+    "IDA": "{:.3f}",
+    "Total Per Piece": "{:.3f}",
+    "HRS/100": "{:.3f}",
+    "Rough Weight Pounds": "{:.2f}",
+    "Rough Weight KG": "{:.2f}",
+    "Total for Quantity": "{:.3f}",
+    "Total Pounds": "{:.2f}",
+    "Allocation Value": "{:.2f}",
+    "Allocation Base": "{:.2f}",
+})
+
     except Exception as error:
         st.error(
             f"Unable to process the TXT file: {error}"
