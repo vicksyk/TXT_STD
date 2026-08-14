@@ -659,4 +659,10 @@ if uploaded_txt is not None:
                 st.number_input(
                     "Total HRS/100 for 17033",
                     min_value=0.0,
-                    value
+                    value=float(
+                        profile["total_hours_100_17033"]
+                    ),
+                    step=0.001,
+                    format="%.3f"
+                )
+            )
