@@ -13,6 +13,85 @@ st.title("TXT STD Calculator")
 
 st.write("My First Streamlit Application")
 
+# ====================================
+# Option 3 - Machine Selection
+# ====================================
+
+machine = st.selectbox(
+    "Select Machine",
+    [
+        "Laser",
+        "Press Brake",
+        "RoboBend",
+        "ShotBlast"
+    ]
+)
+
+st.write("Selected Machine:", machine)
+
+# ====================================
+# Option 2 - STD Calculator
+# ====================================
+
+cut_length = st.number_input(
+    "Cut Length",
+    min_value=0.0
+)
+
+machine_speed = st.number_input(
+    "Machine Speed",
+    min_value=1.0
+)
+
+if st.button("Calculate STD"):
+    std_time = cut_length / machine_speed
+    st.success(
+        f"STD Time = {std_time:.2f} minutes"
+    )
+
+# ====================================
+# Option 1 - TXT Upload
+# ====================================
+
+uploaded_txt = st.file_uploader(
+    "Upload TXT File",
+    type=["txt"]
+)
+
+if uploaded_txt is not None:
+
+    content = uploaded_txt.read().decode(
+        "utf-8"
+    )
+
+    st.text_area(
+        "TXT Content",
+        content,
+        height=300
+    )
+
+# ====================================
+# Option 4 - Excel Upload
+# ====================================
+
+uploaded_excel = st.file_uploader(
+    "Upload Excel File",
+    type=["xlsx"]
+)
+
+if uploaded_excel:
+
+    df = pd.read_excel(
+        uploaded_excel
+    )
+
+    st.dataframe(
+        df.head()
+    )
+
+# ====================================
+# Existing Code
+# ====================================
 
 from dataclasses import dataclass, asdict
 from pathlib import Path
