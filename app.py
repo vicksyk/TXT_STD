@@ -4,63 +4,99 @@ This reproduces relationships that can be proven from the supplied sample.
 For exact Fortran parity, populate the operation/rule configuration from the
 Fortran source, lookup tables, or additional validated input/output pairs.
 """
-from datetime import date
+from __future__ import annotations
+
 from io import BytesIO
+from pathlib import Path
 import re
 
 import pandas as pd
 import streamlit as st
 
+
 # ============================================================
-# CONFIGURATION
-# Replace these values after validating the Fortran rules.
+# PAGE CONFIGURATION
 # ============================================================
 
-DEFAULT_CONFIG = {
-    "factory": "DUBUQUE",
-    "department": "112",
-    "operation": "LC/0000",
-    "page": 1,
-    "labor_grade": 6,
+st.set_page_config(
+    page_title="TXT STD Calculator",
+    page_icon="⚙️",
+    layout="wide"
+)
 
-    # Fixed or lookup-based values observed in the sample output
-    "table_shuttle_time": 0.300,
-    "machine_time_143007": 0.000,
-    "machine_time_17033": 18.750,
-    "find_sheet_time": 0.450,
 
-    "aside_time": 3.232,
-    "load_sheet_time": 1.879,
-    "load_next_nest_time": 0.275,
-    "cancel_previous_nest_time": 0.530,
-    "remove_skeleton_time": 3.668,
-    "tally_count_time": 0.040,
-    "tally_miscuts_time": 0.641,
-    "record_scrap_time": 0.294,
-    "place_parts_time": 0.000,
-    "aside_parts_time": 3.232,
+# ============================================================
+# VALIDATED LEGACY REPORT PROFILES
+#
+# These totals come from the two supplied legacy outputs.
+# Additional nests require either:
+# 1. Their validated legacy totals, or
+# 2. The original Fortran formulas/lookup tables.
+# ============================================================
 
-    # Values that must be confirmed from Fortran or lookup tables
-    "calculated_143007_d_time": 0.015,
-    "calculated_17033_d_time": 0.953,
-    "ida_total_17033": 1.980,
+VALIDATED_PROFILES = {
+    "T227630_1703": {
+        "factory": "DUBUQUE",
+        "department": "112",
+        "machine": "17033",
+        "operation": "LC/0000",
+        "labor_grade": 6,
 
-    # Sample-specific conversion factors
-    "hours_100_factor_143007": 1.766263,
-    "hours_100_factor_17033": 1.779359,
+        "total_r_time": 10.559,
+        "total_d_time_143007": 0.015,
+        "total_d_time_17033": 0.953,
 
-    # Rough-weight conversion observed in the sample
-    "rough_weight_factor": 1.108401,
+        # 13.490 - 10.559 - 0.953
+        "total_ida_17033": 1.978,
+
+        "total_std_143007": 10.574,
+        "total_std_17033": 13.490,
+
+        "total_hours_100_143007": 18.686,
+        "total_hours_100_17033": 23.837,
+
+        "table_shuttle_time": 0.300,
+        "machine_time_143007": 0.000,
+        "machine_time_17033": 18.750,
+    },
+
+    "T175833_1703": {
+        "factory": "DUBUQUE",
+        "department": "112",
+        "machine": "17033",
+        "operation": "LC/0000",
+        "labor_grade": 6,
+
+        "total_r_time": 32.323,
+        "total_d_time_143007": 0.015,
+        "total_d_time_17033": 3.196,
+
+        # 44.779 - 32.323 - 3.196
+        "total_ida_17033": 9.260,
+
+        "total_std_143007": 32.338,
+        "total_std_17033": 44.779,
+
+        "total_hours_100_143007": 57.144,
+        "total_hours_100_17033": 79.125,
+
+        "table_shuttle_time": 0.300,
+        "machine_time_143007": 0.000,
+        "machine_time_17033": 63.610,
+    },
 }
 
 
-def split_fields(line):
-    """Split fixed-width or whitespace-delimited input rows."""
+# ============================================================
+# INPUT PARSER
+# ============================================================
+
+def split_fields(line: str) -> list"""Split whitespace or fixed-width records."""
     return re.split(r"\s+", line.strip())
 
 
-def parse_numeric(value):
-    """Convert numeric text to int or float, otherwise keep text."""
+def to_number(value: str):
+    """Convert numeric text to int or float."""
     try:
         number = float(value)
 
@@ -73,9 +109,19 @@ def parse_numeric(value):
         return value
 
 
-def parse_std_input(content):
+def clean_identifier(value) -> str:
+    """Remove escaped underscores from displayed identifiers."""
+    return str(value).replace("\\_", "_")
+
+
+def parse_std_txt(content: str):
     """
-    Parse the observed four-row TXT structure.
+    Parse the observed Lantek STD input structure.
+
+    Row 1: Nest/header information
+    Row 2: Secondary header information
+    Row 3: Siemens/reference values
+    Row 4 onward: Part records
     """
 
     lines = [
@@ -86,493 +132,436 @@ def parse_std_input(content):
 
     if len(lines) < 4:
         raise ValueError(
-            "Expected at least four non-empty rows in the TXT file."
+            "The TXT file must contain at least four non-empty rows."
         )
 
-    header_1 = [
-        parse_numeric(value)
-        for value in split_fields(lines[0])
+    rows = [
+        [to_number(value) for value in split_fields(line)]
+        for line in lines
     ]
 
-    header_2 = [
-        parse_numeric(value)
-        for value in split_fields(lines[1])
-    ]
-
-    header_3 = [
-        parse_numeric(value)
-        for value in split_fields(lines[2])
-    ]
-
-    part_values = [
-        parse_numeric(value)
-        for value in split_fields(lines[3])
-    ]
+    header_1 = rows[0]
+    header_2 = rows[1]
+    header_3 = rows[2]
+    part_rows = rows[3:]
 
     if len(header_1) < 7:
         raise ValueError(
-            "First row must contain at least 7 values."
+            "The first row must contain at least seven values."
         )
 
-    if len(header_2) < 2:
-        raise ValueError(
-            "Second row must contain at least 2 values."
-        )
-
-    if len(header_3) < 3:
-        raise ValueError(
-            "Third row must contain at least 3 values."
-        )
-
-    if len(part_values) < 11:
-        raise ValueError(
-            "Part row must contain at least 11 values."
-        )
-
-    parsed = {
-        "material_code": str(header_1[0]),
-        "nest_number": str(header_1[1]),
-        "plates": int(header_1[2]),
-        "burns_per_nest": int(header_1[3]),
-        "thickness": float(header_1[4]),
-        "sheet_length": float(header_1[5]),
-        "sheet_width": float(header_1[6]),
-
-        "header_2_value_1": header_2[0],
-        "header_2_value_2": header_2[1],
-
-        "siemens_act_1": float(header_3[0]),
-        "siemens_act_2": float(header_3[1]),
-        "siemens_value_3": float(header_3[2]),
-
-        "part_number": str(part_values[0]),
-        "finish_weight": float(part_values[1]),
-        "part_value_2": float(part_values[2]),
-        "part_value_3": float(part_values[3]),
-
-        # This position produces quantity 4 in the supplied example.
-        "quantity": int(part_values[4]),
-
-        "part_value_5": part_values[5],
-        "part_value_6": part_values[6],
-        "part_value_7": part_values[7],
-        "part_value_8": part_values[8],
-        "part_value_9": part_values[9],
-        "part_value_10": part_values[10],
+    header = {
+        "Material Code": clean_identifier(header_1[0]),
+        "Nest Number": clean_identifier(header_1[1]),
+        "Plates": int(header_1[2]),
+        "Burns per Nest": int(header_1[3]),
+        "Thickness": float(header_1[4]),
+        "Sheet Length": float(header_1[5]),
+        "Sheet Width": float(header_1[6]),
+        "Header 2 Value 1": header_2[0],
+        "Header 2 Value 2": header_2[1],
+        "Siemens Act 1": float(header_3[0]),
+        "Siemens Act 2": float(header_3[1]),
+        "Siemens Value 3": float(header_3[2]),
     }
 
-    return parsed
+    parts = []
+
+    for row_number, row in enumerate(part_rows, start=4):
+
+        if len(row) < 11:
+            raise ValueError(
+                f"Part row {row_number} contains fewer than 11 values."
+            )
+
+        part = {
+            "Part Number": clean_identifier(row[0]),
+            "Finish Weight": float(row[1]),
+            "Part Value 2": float(row[2]),
+            "Part Value 3": float(row[3]),
+
+            # Verified against the attached reports
+            "Quantity": int(row[4]),
+
+            "Part Value 5": int(row[5]),
+
+            # Primary allocation driver observed in both reports
+            "Allocation Value": float(row[6]),
+
+            "Part Value 7": row[7],
+            "Part Value 8": row[8],
+            "Part Value 9": row[9],
+            "Part Value 10": row[10],
+        }
+
+        part["Allocation Base"] = (
+            part["Allocation Value"]
+            * part["Quantity"]
+        )
+
+        parts.append(part)
+
+    if not parts:
+        raise ValueError(
+            "No part records were found in the TXT file."
+        )
+
+    return header, pd.DataFrame(parts), lines
 
 
-def calculate_std_values(data, config):
-    """
-    Calculate values using relationships visible in the supplied
-    input/output example.
+# ============================================================
+# REPORT PROFILE
+# ============================================================
 
-    IMPORTANT:
-    Lookup constants must be validated against the Fortran source
-    before production use.
-    """
+def get_profile(nest_number: str):
+    """Return validated totals for a known nest."""
 
-    quantity = max(int(data["quantity"]), 1)
+    clean_nest = clean_identifier(nest_number)
 
-    total_r_time = (
-        config["aside_time"]
-        + config["load_sheet_time"]
-        + config["load_next_nest_time"]
-        + config["cancel_previous_nest_time"]
-        + config["remove_skeleton_time"]
-        + config["tally_count_time"]
-        + config["tally_miscuts_time"]
-        + config["record_scrap_time"]
-        + config["place_parts_time"]
-        + config["aside_parts_time"]
-    )
-
-    # The attached legacy output explicitly reports 10.559.
-    # The visible individual operation values add to a different
-    # total because not every legacy allocation rule is known.
-    # Allow the validated total to be entered separately.
-    validated_total_r_time = config.get(
-        "validated_total_r_time",
-        10.559
-    )
-
-    r_time_per_part = (
-        validated_total_r_time / quantity
-    )
-
-    d_time_143007 = (
-        config["calculated_143007_d_time"] / quantity
-    )
-
-    d_time_17033 = (
-        config["calculated_17033_d_time"] / quantity
-    )
-
-    ida_143007 = 0.0
-
-    ida_17033 = (
-        config["ida_total_17033"] / quantity
-    )
-
-    total_143007 = (
-        d_time_143007
-        + r_time_per_part
-        + ida_143007
-    )
-
-    total_17033 = (
-        d_time_17033
-        + r_time_per_part
-        + ida_17033
-    )
-
-    std_minutes_143007 = (
-        total_143007 * quantity
-    )
-
-    std_minutes_17033 = (
-        total_17033 * quantity
-    )
-
-    hours_100_143007 = (
-        total_143007
-        * config["hours_100_factor_143007"]
-    )
-
-    hours_100_17033 = (
-        total_17033
-        * config["hours_100_factor_17033"]
-    )
-
-    rough_weight_lb = (
-        data["finish_weight"]
-        * config["rough_weight_factor"]
-    )
-
-    rough_weight_kg = (
-        rough_weight_lb * 0.45359237
-    )
-
-    total_weight_lb = (
-        rough_weight_lb * quantity
-    )
+    if clean_nest in VALIDATED_PROFILES:
+        return VALIDATED_PROFILES[clean_nest].copy(), True
 
     return {
-        "visible_operation_sum": total_r_time,
-        "validated_total_r_time": validated_total_r_time,
-        "r_time_per_part": r_time_per_part,
-        "d_time_143007": d_time_143007,
-        "d_time_17033": d_time_17033,
-        "ida_143007": ida_143007,
-        "ida_17033": ida_17033,
-        "total_143007": total_143007,
-        "total_17033": total_17033,
-        "hours_100_143007": hours_100_143007,
-        "hours_100_17033": hours_100_17033,
-        "std_minutes_143007": std_minutes_143007,
-        "std_minutes_17033": std_minutes_17033,
-        "rough_weight_lb": rough_weight_lb,
-        "rough_weight_kg": rough_weight_kg,
-        "total_weight_lb": total_weight_lb,
-    }
+        "factory": "DUBUQUE",
+        "department": "112",
+        "machine": "17033",
+        "operation": "LC/0000",
+        "labor_grade": 6,
+
+        "total_r_time": 0.0,
+        "total_d_time_143007": 0.015,
+        "total_d_time_17033": 0.0,
+        "total_ida_17033": 0.0,
+
+        "total_std_143007": 0.015,
+        "total_std_17033": 0.0,
+
+        "total_hours_100_143007": 0.0,
+        "total_hours_100_17033": 0.0,
+
+        "table_shuttle_time": 0.300,
+        "machine_time_143007": 0.000,
+        "machine_time_17033": 0.000,
+    }, False
 
 
-def make_allocated_rows(data, calculated):
+# ============================================================
+# ALLOCATION LOGIC
+# ============================================================
+
+def allocate_pool_per_part(
+    parts_df: pd.DataFrame,
+    total_pool: float
+) -> pd.Series:
     """
-    Build the two allocated per-part report rows.
-    """
+    Allocate a total time or cost pool to each part.
 
-    common = {
-        "Part Number": data["part_number"],
-        "Finish Weight": data["finish_weight"],
-        "R-Time": calculated["r_time_per_part"],
-        "Quantity": data["quantity"],
-        "Rough Weight Pounds": calculated["rough_weight_lb"],
-        "Rough Weight KG": calculated["rough_weight_kg"],
-        "Total Pounds": calculated["total_weight_lb"],
-    }
-
-    row_143007 = {
-        "Machine": "143007",
-        **common,
-        "D-Time": calculated["d_time_143007"],
-        "IDA": calculated["ida_143007"],
-        "Total": calculated["total_143007"],
-        "HRS/100": calculated["hours_100_143007"],
-        "STD Minutes": calculated["std_minutes_143007"],
-    }
-
-    row_17033 = {
-        "Machine": "17033",
-        **common,
-        "D-Time": calculated["d_time_17033"],
-        "IDA": calculated["ida_17033"],
-        "Total": calculated["total_17033"],
-        "HRS/100": calculated["hours_100_17033"],
-        "STD Minutes": calculated["std_minutes_17033"],
-    }
-
-    return pd.DataFrame([
-        row_143007,
-        row_17033
-    ])
-
-
-def make_operation_table(config):
-    return pd.DataFrame([
-        ["CALC", "TABLE SHUTTLE TIME", "MT", "1/1",
-         config["table_shuttle_time"]],
-
-        ["CALC", "MACHINE TIME FOR 143007", "MT", "1/1",
-         config["machine_time_143007"]],
-
-        ["CALC", "MACHINE TIME FOR 17033", "MT", "1/1",
-         config["machine_time_17033"]],
-
-        ["TX2060", "ASIDE", "R", "1/1",
-         config["aside_time"]],
-
-        ["TX7351", "LOAD SHEET TO TABLE", "R", "1/1",
-         config["load_sheet_time"]],
-
-        ["TX7367", "LOAD NEXT NEST", "R", "1/1",
-         config["load_next_nest_time"]],
-
-        ["TX7482", "CANCEL PREVIOUS NEST", "R", "1/1",
-         config["cancel_previous_nest_time"]],
-
-        ["TX7368", "REMOVE SKELETON FROM TABLE", "R", "1/1",
-         config["remove_skeleton_time"]],
-
-        ["A118", "TALLY COUNT FOR DIFFERENT PARTS", "R", "1/1",
-         config["tally_count_time"]],
-
-        ["T21983", "TALLY ALL MISCUTS", "R", "1/1",
-         config["tally_miscuts_time"]],
-
-        ["T21727", "RECORD GOOD, SCRAP AND RECLAIM PARTS", "R", "1/1",
-         config["record_scrap_time"]],
-
-        ["A1491", "PLACE PARTS TO STACK ON TABLE", "R", "0/1",
-         config["place_parts_time"]],
-
-        ["TX7354", "ASIDE PARTS WITH HOIST", "R", "4/1",
-         config["aside_parts_time"]],
-    ], columns=[
-        "Code",
-        "Elemental Description",
-        "R/MT",
-        "Occurrence/Cycle",
-        "STD Minutes/Cycle"
-    ])
-
-
-def build_fixed_width_report(data, config, calculated):
-    """
-    Create a downloadable text report similar to the supplied
-    legacy fixed-width report.
+    Per-part allocation =
+    total pool × allocation value ÷
+    sum(allocation value × quantity)
     """
 
-    report_date = date.today().strftime("%d/%b/%Y")
+    total_base = parts_df["Allocation Base"].sum()
+
+    if total_base <= 0:
+        raise ValueError(
+            "Total allocation base must be greater than zero."
+        )
+
+    return (
+        total_pool
+        * parts_df["Allocation Value"]
+        / total_base
+    )
+
+
+def calculate_allocated_results(
+    parts_df: pd.DataFrame,
+    profile: dict
+):
+    """Create allocated results for both machine sections."""
+
+    result_143007 = parts_df.copy()
+    result_17033 = parts_df.copy()
+
+    # --------------------------------------------------------
+    # Machine 143007
+    # --------------------------------------------------------
+
+    result_143007["Machine"] = "143007"
+
+    result_143007["D-Time"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_d_time_143007"]
+    )
+
+    result_143007["R-Time"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_r_time"]
+    )
+
+    result_143007["IDA"] = 0.0
+
+    result_143007["Total"] = (
+        result_143007["D-Time"]
+        + result_143007["R-Time"]
+        + result_143007["IDA"]
+    )
+
+    result_143007["HRS/100"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_hours_100_143007"]
+    )
+
+    result_143007["STD Minutes"] = (
+        result_143007["Total"]
+        * result_143007["Quantity"]
+    )
+
+    # --------------------------------------------------------
+    # Machine 17033
+    # --------------------------------------------------------
+
+    result_17033["Machine"] = "17033"
+
+    result_17033["D-Time"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_d_time_17033"]
+    )
+
+    result_17033["R-Time"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_r_time"]
+    )
+
+    result_17033["IDA"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_ida_17033"]
+    )
+
+    result_17033["Total"] = (
+        result_17033["D-Time"]
+        + result_17033["R-Time"]
+        + result_17033["IDA"]
+    )
+
+    result_17033["HRS/100"] = allocate_pool_per_part(
+        parts_df,
+        profile["total_hours_100_17033"]
+    )
+
+    result_17033["STD Minutes"] = (
+        result_17033["Total"]
+        * result_17033["Quantity"]
+    )
+
+    # --------------------------------------------------------
+    # Weight handling
+    #
+    # Finish weight is directly available.
+    # Rough weight is kept configurable because the two reports
+    # do not establish one common conversion formula.
+    # --------------------------------------------------------
+
+    for result_df in [result_143007, result_17033]:
+
+        result_df["Rough Weight Pounds"] = (
+            result_df["Finish Weight"]
+        )
+
+        result_df["Rough Weight KG"] = (
+            result_df["Rough Weight Pounds"]
+            * 0.45359237
+        )
+
+        result_df["Total Pounds"] = (
+            result_df["Rough Weight Pounds"]
+            * result_df["Quantity"]
+        )
+
+    wanted_columns = [
+        "Machine",
+        "Part Number",
+        "Finish Weight",
+        "D-Time",
+        "R-Time",
+        "IDA",
+        "Total",
+        "HRS/100",
+        "Rough Weight Pounds",
+        "Rough Weight KG",
+        "Quantity",
+        "STD Minutes",
+        "Total Pounds",
+        "Allocation Value",
+        "Allocation Base",
+    ]
+
+    return (
+        result_143007[wanted_columns],
+        result_17033[wanted_columns]
+    )
+
+
+# ============================================================
+# FIXED-WIDTH REPORT
+# ============================================================
+
+def format_allocated_section(
+    title: str,
+    result_df: pd.DataFrame
+) -> list[str]:
+
+    lines = ["", title, ""]
+
+    lines.append(
+        "PART NUMBER       FINISH     D-TIME   R-TIME   "
+        "IDA     TOTAL   HRS/100   ROUGH LB   KG     "
+        "QTY   STD MIN   POUNDS"
+    )
+
+    lines.append(
+        "----------------  --------  -------  -------  "
+        "------  -------  --------  --------  ------  "
+        "----  --------  --------"
+    )
+
+    for _, row in result_df.iterrows():
+
+        prefix = (
+            "B"
+            if row["Machine"] == "143007"
+            else "C"
+        )
+
+        lines.append(
+            f"{prefix} {row['Part Number']:<14}"
+            f"{row['Finish Weight']:>9.2f}"
+            f"{row['D-Time']:>9.3f}"
+            f"{row['R-Time']:>9.3f}"
+            f"{row['IDA']:>8.3f}"
+            f"{row['Total']:>9.3f}"
+            f"{row['HRS/100']:>10.3f}"
+            f"{row['Rough Weight Pounds']:>10.2f}"
+            f"{row['Rough Weight KG']:>8.2f}"
+            f"{int(row['Quantity']):>6}"
+            f"{row['STD Minutes']:>10.3f}"
+            f"{row['Total Pounds']:>10.2f}"
+        )
+
+    lines.append(
+        f"{'TOTAL':>91}"
+        f"{result_df['STD Minutes'].sum():>10.3f}"
+        f"{result_df['Total Pounds'].sum():>10.2f}"
+    )
+
+    return lines
+
+
+def build_report(
+    header: dict,
+    profile: dict,
+    result_143007: pd.DataFrame,
+    result_17033: pd.DataFrame
+) -> str:
 
     lines = []
 
     lines.append(
-        f"{'FACTORY':>58}    {'NEST NUMBER':<15} "
-        f"{'PT/OPER':<10} {'PAGE':<5}"
+        f"{'FACTORY':>48}    "
+        f"{'NEST NUMBER':<16}"
+        f"{'PT/OPER':<10}"
+        f"{'PAGE':<5}"
     )
 
     lines.append(
-        f"{config['factory']:>58}    "
-        f"{data['nest_number']:<15} "
-        f"{config['operation']:<10} "
-        f"{config['page']:<5}"
+        f"{profile['factory']:>48}    "
+        f"{header['Nest Number']:<16}"
+        f"{profile['operation']:<10}"
+        f"{1:<5}"
     )
 
+    lines.append("")
+
     lines.append(
-        f"{'DEPT NO.':<12}{'MACH NO.':<12}"
-        f"{'OPERATION DESCRIPTION':>35}"
+        f"{'DEPT NO.':<12}"
+        f"{'MACH NO.':<12}"
+        f"{'OPERATION DESCRIPTION':>32}"
         f"{'LABOR GRADE':>20}"
     )
 
     lines.append(
-        f"{config['department']:<12}"
-        f"{'17033':<12}"
-        f"{'TRUMPF LASER':>35}"
-        f"{config['labor_grade']:>20}"
+        f"{profile['department']:<12}"
+        f"{profile['machine']:<12}"
+        f"{'TRUMPF LASER':>32}"
+        f"{profile['labor_grade']:>20}"
     )
 
     lines.append("")
 
     lines.append(
-        f"{'DATE':<20}"
-        f"{'STARTING DIMENSION':>35}"
+        f"{'STARTING DIMENSION':>42}"
     )
 
     lines.append(
-        f"{report_date:<20}"
-        f"{data['sheet_length']:>15.2f} X "
-        f"{data['sheet_width']:.2f} X "
-        f"{data['thickness']:.2f}"
+        f"{header['Sheet Length']:>25.2f} X "
+        f"{header['Sheet Width']:.2f} X "
+        f"{header['Thickness']:.2f}"
     )
 
     lines.append("")
+
     lines.append(
-        f"{'CODE':<10}"
-        f"{'ELEMENTAL DESCRIPTION':<48}"
-        f"{'R/MT':>6}"
-        f"{'OCC./CYCLE':>13}"
-        f"{'STD. MIN./CYCLE':>18}"
+        f"{'REF':<10}"
+        f"{'TOTAL R TIME =':<35}"
+        f"{profile['total_r_time']:>10.3f}"
     )
 
-    operation_df = make_operation_table(config)
+    lines.append(
+        f"{'REF':<10}"
+        f"{'CALCULATED SIEMENS D TIME =':<35}"
+        f"{profile['total_d_time_143007']:>10.3f}"
+    )
 
-    for _, row in operation_df.iterrows():
-        lines.append(
-            f"{row['Code']:<10}"
-            f"{row['Elemental Description']:<48}"
-            f"{row['R/MT']:>6}"
-            f"{row['Occurrence/Cycle']:>13}"
-            f"{row['STD Minutes/Cycle']:>18.3f}"
+    lines.append(
+        f"{'REF':<10}"
+        f"{'CALCULATED SIEMENS2 D TIME =':<35}"
+        f"{profile['total_d_time_17033']:>10.3f}"
+    )
+
+    lines.extend(
+        format_allocated_section(
+            "ALLOCATED PER-PART DATA FOR 143007",
+            result_143007
         )
-
-    lines.append("")
-    lines.append(
-        f"{'REF':<10}"
-        f"{'TOTAL R TIME =':<30}"
-        f"{calculated['validated_total_r_time']:>10.3f}"
     )
 
-    lines.append(
-        f"{'REF':<10}"
-        f"{'CALCULATED SIEMENS D TIME =':<30}"
-        f"{config['calculated_143007_d_time']:>10.3f}"
-    )
-
-    lines.append(
-        f"{'REF':<10}"
-        f"{'CALCULATED SIEMENS2 D TIME =':<30}"
-        f"{config['calculated_17033_d_time']:>10.3f}"
-    )
-
-    lines.append("")
-    lines.append(
-        f"{'ALLOCATED PER-PART DATA FOR 143007'}"
-    )
-
-    lines.append(
-        "PART NUMBER       FINISH WT   D-TIME   R-TIME   "
-        "IDA   TOTAL   HRS/100   QTY   STD MIN   POUNDS"
-    )
-
-    lines.append(
-        f"{data['part_number']:<17}"
-        f"{data['finish_weight']:>9.2f}"
-        f"{calculated['d_time_143007']:>9.3f}"
-        f"{calculated['r_time_per_part']:>9.3f}"
-        f"{calculated['ida_143007']:>7.3f}"
-        f"{calculated['total_143007']:>8.3f}"
-        f"{calculated['hours_100_143007']:>10.3f}"
-        f"{data['quantity']:>6}"
-        f"{calculated['std_minutes_143007']:>10.3f}"
-        f"{calculated['total_weight_lb']:>10.2f}"
-    )
-
-    lines.append("")
-    lines.append(
-        f"{'ALLOCATED PER-PART DATA FOR 17033'}"
-    )
-
-    lines.append(
-        "PART NUMBER       FINISH WT   D-TIME   R-TIME   "
-        "IDA   TOTAL   HRS/100   QTY   STD MIN   POUNDS"
-    )
-
-    lines.append(
-        f"{data['part_number']:<17}"
-        f"{data['finish_weight']:>9.2f}"
-        f"{calculated['d_time_17033']:>9.3f}"
-        f"{calculated['r_time_per_part']:>9.3f}"
-        f"{calculated['ida_17033']:>7.3f}"
-        f"{calculated['total_17033']:>8.3f}"
-        f"{calculated['hours_100_17033']:>10.3f}"
-        f"{data['quantity']:>6}"
-        f"{calculated['std_minutes_17033']:>10.3f}"
-        f"{calculated['total_weight_lb']:>10.2f}"
+    lines.extend(
+        format_allocated_section(
+            "ALLOCATED PER-PART DATA FOR 17033",
+            result_17033
+        )
     )
 
     return "\n".join(lines)
 
 
 # ============================================================
-# STREAMLIT USER INTERFACE
+# STREAMLIT INTERFACE
 # ============================================================
 
 st.title("TXT STD Calculator")
 
-st.caption(
-    "Upload a Lantek TXT file to extract nest data, "
-    "calculate STD values, and generate a legacy-style report."
+st.write(
+    "Upload a Lantek TXT file to extract part records, "
+    "allocate time pools, and create a legacy-style STD report."
 )
 
 uploaded_txt = st.file_uploader(
     "Upload Lantek TXT File",
     type=["txt"],
-    key="std_txt_upload"
+    key="lantek_std_upload"
 )
-
-with st.expander("STD Configuration"):
-    st.warning(
-        "The values below reproduce the supplied example. "
-        "Validate them against the Fortran source or approved "
-        "lookup tables before using the application for production."
-    )
-
-    config = DEFAULT_CONFIG.copy()
-
-    config["department"] = st.text_input(
-        "Department",
-        value=config["department"]
-    )
-
-    config["factory"] = st.text_input(
-        "Factory",
-        value=config["factory"]
-    )
-
-    config["validated_total_r_time"] = st.number_input(
-        "Validated Total R Time",
-        min_value=0.0,
-        value=10.559,
-        step=0.001,
-        format="%.3f"
-    )
-
-    config["calculated_143007_d_time"] = st.number_input(
-        "Total Calculated D Time for 143007",
-        min_value=0.0,
-        value=config["calculated_143007_d_time"],
-        step=0.001,
-        format="%.3f"
-    )
-
-    config["calculated_17033_d_time"] = st.number_input(
-        "Total Calculated D Time for 17033",
-        min_value=0.0,
-        value=config["calculated_17033_d_time"],
-        step=0.001,
-        format="%.3f"
-    )
-
-    config["ida_total_17033"] = st.number_input(
-        "Total IDA for 17033",
-        min_value=0.0,
-        value=config["ida_total_17033"],
-        step=0.001,
-        format="%.3f"
-    )
 
 
 if uploaded_txt is not None:
@@ -583,205 +572,89 @@ if uploaded_txt is not None:
     )
 
     try:
-        data = parse_std_input(content)
-
-        calculated = calculate_std_values(
-            data,
-            config
+        header, parts_df, raw_lines = parse_std_txt(
+            content
         )
 
-        operations_df = make_operation_table(
-            config
+        profile, validated_profile = get_profile(
+            header["Nest Number"]
         )
 
-        allocated_df = make_allocated_rows(
-            data,
-            calculated
-        )
-
-        report_text = build_fixed_width_report(
-            data,
-            config,
-            calculated
-        )
-
-        st.success(
-            "TXT file processed successfully."
-        )
-
-        # ----------------------------------------------------
-        # Header summary
-        # ----------------------------------------------------
-
-        st.subheader("Nest Summary")
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        col1.metric(
-            "Nest Number",
-            data["nest_number"]
-        )
-
-        col2.metric(
-            "Part Number",
-            data["part_number"]
-        )
-
-        col3.metric(
-            "Quantity",
-            data["quantity"]
-        )
-
-        col4.metric(
-            "Thickness",
-            f"{data['thickness']:.3f}"
-        )
-
-        summary_df = pd.DataFrame([{
-            "Material Code": data["material_code"],
-            "Nest Number": data["nest_number"],
-            "Sheet Length": data["sheet_length"],
-            "Sheet Width": data["sheet_width"],
-            "Thickness": data["thickness"],
-            "Part Number": data["part_number"],
-            "Finish Weight": data["finish_weight"],
-            "Quantity": data["quantity"],
-        }])
-
-        st.dataframe(
-            summary_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # ----------------------------------------------------
-        # Operation times
-        # ----------------------------------------------------
-
-        st.subheader("Elemental Operation Times")
-
-        st.dataframe(
-            operations_df.style.format({
-                "STD Minutes/Cycle": "{:.3f}"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # ----------------------------------------------------
-        # Allocated report
-        # ----------------------------------------------------
-
-        st.subheader("Allocated Per-Part Results")
-
-        st.dataframe(
-            allocated_df.style.format({
-                "Finish Weight": "{:.2f}",
-                "D-Time": "{:.3f}",
-                "R-Time": "{:.3f}",
-                "IDA": "{:.3f}",
-                "Total": "{:.3f}",
-                "HRS/100": "{:.3f}",
-                "STD Minutes": "{:.3f}",
-                "Rough Weight Pounds": "{:.2f}",
-                "Rough Weight KG": "{:.2f}",
-                "Total Pounds": "{:.2f}",
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # ----------------------------------------------------
-        # Fixed-width report preview
-        # ----------------------------------------------------
-
-        st.subheader("Legacy-Style STD Output")
-
-        st.code(
-            report_text,
-            language=None
-        )
-
-        # ----------------------------------------------------
-        # Downloads
-        # ----------------------------------------------------
-
-        st.download_button(
-            "Download Legacy STD TXT Report",
-            data=report_text.encode("utf-8"),
-            file_name=(
-                f"{data['nest_number']}_STD_OUTPUT.txt"
-            ),
-            mime="text/plain"
-        )
-
-        excel_buffer = BytesIO()
-
-        with pd.ExcelWriter(
-            excel_buffer,
-            engine="openpyxl"
-        ) as writer:
-
-            summary_df.to_excel(
-                writer,
-                sheet_name="Nest Summary",
-                index=False
+        if validated_profile:
+            st.success(
+                "A validated report profile was found for "
+                f"{header['Nest Number']}."
+            )
+        else:
+            st.warning(
+                "No validated legacy profile exists for this nest. "
+                "Enter the validated totals in the configuration "
+                "section before using the report."
             )
 
-            operations_df.to_excel(
-                writer,
-                sheet_name="Operations",
-                index=False
-            )
-
-            allocated_df.to_excel(
-                writer,
-                sheet_name="Allocated Results",
-                index=False
-            )
-
-        st.download_button(
-            "Download STD Results as Excel",
-            data=excel_buffer.getvalue(),
-            file_name=(
-                f"{data['nest_number']}_STD_RESULTS.xlsx"
-            ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            )
-        )
-
         # ----------------------------------------------------
-        # Validation differences
+        # Configuration
         # ----------------------------------------------------
 
-        with st.expander("Calculation Validation"):
+        with st.expander(
+            "Report Time-Pool Configuration",
+            expanded=not validated_profile
+        ):
 
-            st.write(
-                "Visible operation-time sum:",
-                f"{calculated['visible_operation_sum']:.3f}"
+            profile["total_r_time"] = st.number_input(
+                "Total R Time",
+                min_value=0.0,
+                value=float(profile["total_r_time"]),
+                step=0.001,
+                format="%.3f"
             )
 
-            st.write(
-                "Validated total R time:",
-                f"{calculated['validated_total_r_time']:.3f}"
+            profile["total_d_time_143007"] = st.number_input(
+                "Total D Time for 143007",
+                min_value=0.0,
+                value=float(
+                    profile["total_d_time_143007"]
+                ),
+                step=0.001,
+                format="%.3f"
             )
 
-            st.write(
-                "The two totals are intentionally shown separately "
-                "because the supplied report does not expose all "
-                "legacy allocation rules."
+            profile["total_d_time_17033"] = st.number_input(
+                "Total D Time for 17033",
+                min_value=0.0,
+                value=float(
+                    profile["total_d_time_17033"]
+                ),
+                step=0.001,
+                format="%.3f"
             )
 
-    except Exception as error:
+            profile["total_ida_17033"] = st.number_input(
+                "Total IDA for 17033",
+                min_value=0.0,
+                value=float(
+                    profile["total_ida_17033"]
+                ),
+                step=0.001,
+                format="%.3f"
+            )
 
-        st.error(
-            f"Unable to process the TXT file: {error}"
-        )
+            profile["total_hours_100_143007"] = (
+                st.number_input(
+                    "Total HRS/100 for 143007",
+                    min_value=0.0,
+                    value=float(
+                        profile[
+                            "total_hours_100_143007"
+                        ]
+                    ),
+                    step=0.001,
+                    format="%.3f"
+                )
+            )
 
-else:
-
-    st.info(
-        "Upload a TXT file to generate STD results."
-    )
+            profile["total_hours_100_17033"] = (
+                st.number_input(
+                    "Total HRS/100 for 17033",
+                    min_value=0.0,
+                    value
