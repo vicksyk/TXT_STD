@@ -583,7 +583,7 @@ def format_allocated_section(
 
     lines.append(
         f"{'TOTAL':>91}"
-        f"{result_df['STD Minutes'].sum():>10.3f}"
+        f"{result_df['Total for Quantity'].sum():>10.3f}"
         f"{result_df['Total Pounds'].sum():>10.2f}"
     )
 
