@@ -13,6 +13,142 @@ st.title("TXT STD Calculator")
 
 st.write("My First Streamlit Application")
 
+uploaded_txt = st.file_uploader(
+    "Upload Lantek TXT File",
+    type=["txt"]
+)
+
+# ====================================
+# Step 2 - Read TXT File
+# ====================================
+
+if uploaded_txt is not None:
+
+    content = uploaded_txt.read().decode(
+        "utf-8",
+        errors="ignore"
+    )
+
+    st.subheader(
+        "TXT File Preview"
+    )
+
+    st.text_area(
+        "Contents",
+        content[:3000],
+        height=250
+    )
+
+    # ====================================
+    # Step 3 - Extract Lines
+    # ====================================
+
+    lines = content.splitlines()
+
+    st.write(
+        "Number of Lines:",
+        len(lines)
+    )
+
+    # ====================================
+    # Step 4 - Display Raw Table
+    # ====================================
+
+    txt_df = pd.DataFrame({
+        "Line Number": range(
+            1,
+            len(lines)+1
+        ),
+        "TXT Data": lines
+    })
+
+    st.subheader(
+        "TXT Data Table"
+    )
+
+    st.dataframe(
+        txt_df
+    )
+
+# ====================================
+# Step 6 - Machine Selection
+# ====================================
+
+machine = st.selectbox(
+    "Machine",
+    [
+        "Laser North",
+        "Laser South",
+        "Tecoi Plasma",
+        "Trumpf",
+        "Press Brake",
+        "RoboBend",
+        "ShotBlast"
+    ]
+)
+
+# ====================================
+# Step 5 - STD Calculation
+# ====================================
+
+cut_length = st.number_input(
+    "Cut Length"
+)
+
+machine_speed = st.number_input(
+    "Machine Speed",
+    min_value=1.0
+)
+
+if machine_speed > 0:
+
+    std_time = (
+        cut_length /
+        machine_speed
+    )
+
+    st.success(
+        f"STD Time = {std_time:.2f}"
+    )
+
+# ====================================
+# Step 7 - Results Table
+# ====================================
+
+results = pd.DataFrame({
+    "Machine":[machine],
+    "Cut Length":[cut_length],
+    "Machine Speed":[machine_speed],
+    "STD Time":[std_time]
+})
+
+st.subheader(
+    "STD Results"
+)
+
+st.dataframe(
+    results
+)
+
+# ====================================
+# Step 8 - Download Results
+# ====================================
+
+from io import BytesIO
+
+buffer = BytesIO()
+
+results.to_excel(
+    buffer,
+    index=False
+)
+
+st.download_button(
+    "Download STD Report",
+    data=buffer.getvalue(),
+    file_name="STD_Report.xlsx"
+)
+
 # ====================================
 # Option 3 - Machine Selection
 # ====================================
