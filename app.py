@@ -4,7 +4,10 @@ This reproduces relationships that can be proven from the supplied sample.
 For exact Fortran parity, populate the operation/rule configuration from the
 Fortran source, lookup tables, or additional validated input/output pairs.
 """
+from __future__ import annotations
+
 import streamlit as st
+import pandas as pd
 
 st.title("TXT STD Calculator")
 
