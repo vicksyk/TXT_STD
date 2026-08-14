@@ -91,7 +91,8 @@ VALIDATED_PROFILES = {
 # INPUT PARSER
 # ============================================================
 
-def split_fields(line: str) -> list"""Split whitespace or fixed-width records."""
+def split_fields(line: str) -> list:
+    """Split whitespace or fixed-width records."""
     return re.split(r"\s+", line.strip())
 
 
