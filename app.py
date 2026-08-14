@@ -587,7 +587,57 @@ if uploaded_txt is not None:
 
     try:
         header, parts_df, raw_lines = parse_std_txt(
-            content
+     st.subheader("Quantity Validation")
+
+quantity_source = st.selectbox(
+    "Select the TXT field containing part quantity",
+    [
+        "Detected quantity",
+        "Input Value 4",
+        "Input Value 5"
+    ],
+    help=(
+        "Use Input Value 4 for T227630_1703. "
+        "Use Input Value 5 for T175833_1703."
+    )
+)
+
+if quantity_source == "Input Value 4":
+    parts_df["Quantity"] = (
+        parts_df["Input Value 4"].astype(int)
+    )
+
+elif quantity_source == "Input Value 5":
+    parts_df["Quantity"] = (
+        parts_df["Input Value 5"].astype(int)
+    )
+
+invalid_quantity = parts_df["Quantity"] <= 0
+
+if invalid_quantity.any():
+    invalid_parts = parts_df.loc[
+        invalid_quantity,
+        "Part Number"
+    ].tolist()
+
+    raise ValueError(
+        "Quantity is zero or negative for: "
+        + ", ".join(invalid_parts)
+    )
+
+st.dataframe(
+    parts_df[
+        [
+            "Part Number",
+            "Input Value 4",
+            "Input Value 5",
+            "Quantity"
+        ]
+    ],
+    use_container_width=True,
+    hide_index=True
+)
+content
         )
 
         profile, validated_profile = get_profile(
