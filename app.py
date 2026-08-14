@@ -63,7 +63,7 @@ VALIDATED_PROFILES = {
 # INPUT PARSER
 # ============================================================
 
-def split_fields(line: str) -> list
+def split_fields(line: str) -> list:
 """Split a whitespace-delimited TXT row."""
     return re.split(r"\s+", line.strip())
 
@@ -466,7 +466,7 @@ def calculate_allocated_results(
 def format_allocated_section(
     title: str,
     result_df: pd.DataFrame
-) -> list
+) -> list:
 """Create one allocated-results report section."""
 
     lines = [
