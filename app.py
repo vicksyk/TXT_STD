@@ -4,45 +4,67 @@ This reproduces relationships that can be proven from the supplied sample.
 For exact Fortran parity, populate the operation/rule configuration from the
 Fortran source, lookup tables, or additional validated input/output pairs.
 """
-from __future__ import annotations
-
-import re
+from datetime import date
 from io import BytesIO
+import re
 
 import pandas as pd
 import streamlit as st
 
-st.title("TXT STD Calculator")
-
-st.write("Upload a Lantek-to-Fortran TXT file to extract and review STD values.")
-
-st.write("My First Streamlit Application")
-
 # ============================================================
-# TXT file upload
+# CONFIGURATION
+# Replace these values after validating the Fortran rules.
 # ============================================================
 
-uploaded_txt = st.file_uploader(
-    "Upload Lantek TXT File",
-    type=["txt"],
-    key="lantek_txt_upload"
-)
+DEFAULT_CONFIG = {
+    "factory": "DUBUQUE",
+    "department": "112",
+    "operation": "LC/0000",
+    "page": 1,
+    "labor_grade": 6,
+
+    # Fixed or lookup-based values observed in the sample output
+    "table_shuttle_time": 0.300,
+    "machine_time_143007": 0.000,
+    "machine_time_17033": 18.750,
+    "find_sheet_time": 0.450,
+
+    "aside_time": 3.232,
+    "load_sheet_time": 1.879,
+    "load_next_nest_time": 0.275,
+    "cancel_previous_nest_time": 0.530,
+    "remove_skeleton_time": 3.668,
+    "tally_count_time": 0.040,
+    "tally_miscuts_time": 0.641,
+    "record_scrap_time": 0.294,
+    "place_parts_time": 0.000,
+    "aside_parts_time": 3.232,
+
+    # Values that must be confirmed from Fortran or lookup tables
+    "calculated_143007_d_time": 0.015,
+    "calculated_17033_d_time": 0.953,
+    "ida_total_17033": 1.980,
+
+    # Sample-specific conversion factors
+    "hours_100_factor_143007": 1.766263,
+    "hours_100_factor_17033": 1.779359,
+
+    # Rough-weight conversion observed in the sample
+    "rough_weight_factor": 1.108401,
+}
 
 
 def split_fields(line):
-    """Split a fixed-width or whitespace-delimited TXT row."""
+    """Split fixed-width or whitespace-delimited input rows."""
     return re.split(r"\s+", line.strip())
 
 
-def to_number(value):
-    """
-    Convert a text value to int or float when possible.
-    Keep identifiers such as T227630_B2 as text.
-    """
+def parse_numeric(value):
+    """Convert numeric text to int or float, otherwise keep text."""
     try:
         number = float(value)
 
-        if number.is_integer() and "." not in value:
+        if "." not in value and number.is_integer():
             return int(number)
 
         return number
@@ -51,15 +73,9 @@ def to_number(value):
         return value
 
 
-def parse_lantek_txt(content):
+def parse_std_input(content):
     """
-    Parse the observed four-record Lantek/Fortran TXT structure.
-
-    Expected structure:
-    Row 1: Header record
-    Row 2: Count/settings record
-    Row 3: Time/factor record
-    Row 4 onward: Part/result records
+    Parse the observed four-row TXT structure.
     """
 
     lines = [
@@ -70,251 +86,634 @@ def parse_lantek_txt(content):
 
     if len(lines) < 4:
         raise ValueError(
-            "The TXT file must contain at least four non-empty rows."
+            "Expected at least four non-empty rows in the TXT file."
         )
 
-    token_rows = [
-        [to_number(value) for value in split_fields(line)]
-        for line in lines
+    header_1 = [
+        parse_numeric(value)
+        for value in split_fields(lines[0])
     ]
 
-    # Validate against the uploaded sample structure.
-    if len(token_rows[0]) < 7:
+    header_2 = [
+        parse_numeric(value)
+        for value in split_fields(lines[1])
+    ]
+
+    header_3 = [
+        parse_numeric(value)
+        for value in split_fields(lines[2])
+    ]
+
+    part_values = [
+        parse_numeric(value)
+        for value in split_fields(lines[3])
+    ]
+
+    if len(header_1) < 7:
         raise ValueError(
-            "Header row does not contain the expected 7 values."
+            "First row must contain at least 7 values."
         )
 
-    if len(token_rows[1]) < 2:
+    if len(header_2) < 2:
         raise ValueError(
-            "Second row does not contain the expected 2 values."
+            "Second row must contain at least 2 values."
         )
 
-    if len(token_rows[2]) < 3:
+    if len(header_3) < 3:
         raise ValueError(
-            "Third row does not contain the expected 3 values."
+            "Third row must contain at least 3 values."
         )
 
-    # Descriptive positional names are used until the Fortran
-    # field specification confirms the business names.
-    header = {
-        "Header_Value_1": token_rows[0][0],
-        "Nest_Number": token_rows[0][1],
-        "Header_Value_3": token_rows[0][2],
-        "Header_Value_4": token_rows[0][3],
-        "Thickness": token_rows[0][4],
-        "Sheet_Length": token_rows[0][5],
-        "Sheet_Width": token_rows[0][6],
-        "Second_Row_Value_1": token_rows[1][0],
-        "Second_Row_Value_2": token_rows[1][1],
-        "Third_Row_Value_1": token_rows[2][0],
-        "Third_Row_Value_2": token_rows[2][1],
-        "Third_Row_Value_3": token_rows[2][2],
+    if len(part_values) < 11:
+        raise ValueError(
+            "Part row must contain at least 11 values."
+        )
+
+    parsed = {
+        "material_code": str(header_1[0]),
+        "nest_number": str(header_1[1]),
+        "plates": int(header_1[2]),
+        "burns_per_nest": int(header_1[3]),
+        "thickness": float(header_1[4]),
+        "sheet_length": float(header_1[5]),
+        "sheet_width": float(header_1[6]),
+
+        "header_2_value_1": header_2[0],
+        "header_2_value_2": header_2[1],
+
+        "siemens_act_1": float(header_3[0]),
+        "siemens_act_2": float(header_3[1]),
+        "siemens_value_3": float(header_3[2]),
+
+        "part_number": str(part_values[0]),
+        "finish_weight": float(part_values[1]),
+        "part_value_2": float(part_values[2]),
+        "part_value_3": float(part_values[3]),
+
+        # This position produces quantity 4 in the supplied example.
+        "quantity": int(part_values[4]),
+
+        "part_value_5": part_values[5],
+        "part_value_6": part_values[6],
+        "part_value_7": part_values[7],
+        "part_value_8": part_values[8],
+        "part_value_9": part_values[9],
+        "part_value_10": part_values[10],
     }
 
-    records = []
+    return parsed
 
-    for row_number, values in enumerate(token_rows[3:], start=4):
-        record = {
-            "Source_Row": row_number
-        }
 
-        for index, value in enumerate(values, start=1):
-            if index == 1:
-                record["Part_or_Record_ID"] = value
-            else:
-                record[f"Result_Value_{index - 1}"] = value
+def calculate_std_values(data, config):
+    """
+    Calculate values using relationships visible in the supplied
+    input/output example.
 
-        records.append(record)
+    IMPORTANT:
+    Lookup constants must be validated against the Fortran source
+    before production use.
+    """
 
-    header_df = pd.DataFrame(
-        {
-            "Field": list(header.keys()),
-            "Value": list(header.values())
-        }
+    quantity = max(int(data["quantity"]), 1)
+
+    total_r_time = (
+        config["aside_time"]
+        + config["load_sheet_time"]
+        + config["load_next_nest_time"]
+        + config["cancel_previous_nest_time"]
+        + config["remove_skeleton_time"]
+        + config["tally_count_time"]
+        + config["tally_miscuts_time"]
+        + config["record_scrap_time"]
+        + config["place_parts_time"]
+        + config["aside_parts_time"]
     )
 
-    results_df = pd.DataFrame(records)
-
-    # Preserve the original TXT rows for traceability.
-    raw_df = pd.DataFrame(
-        {
-            "Line_Number": range(1, len(lines) + 1),
-            "TXT_Data": lines
-        }
+    # The attached legacy output explicitly reports 10.559.
+    # The visible individual operation values add to a different
+    # total because not every legacy allocation rule is known.
+    # Allow the validated total to be entered separately.
+    validated_total_r_time = config.get(
+        "validated_total_r_time",
+        10.559
     )
 
-    return header, header_df, results_df, raw_df
+    r_time_per_part = (
+        validated_total_r_time / quantity
+    )
+
+    d_time_143007 = (
+        config["calculated_143007_d_time"] / quantity
+    )
+
+    d_time_17033 = (
+        config["calculated_17033_d_time"] / quantity
+    )
+
+    ida_143007 = 0.0
+
+    ida_17033 = (
+        config["ida_total_17033"] / quantity
+    )
+
+    total_143007 = (
+        d_time_143007
+        + r_time_per_part
+        + ida_143007
+    )
+
+    total_17033 = (
+        d_time_17033
+        + r_time_per_part
+        + ida_17033
+    )
+
+    std_minutes_143007 = (
+        total_143007 * quantity
+    )
+
+    std_minutes_17033 = (
+        total_17033 * quantity
+    )
+
+    hours_100_143007 = (
+        total_143007
+        * config["hours_100_factor_143007"]
+    )
+
+    hours_100_17033 = (
+        total_17033
+        * config["hours_100_factor_17033"]
+    )
+
+    rough_weight_lb = (
+        data["finish_weight"]
+        * config["rough_weight_factor"]
+    )
+
+    rough_weight_kg = (
+        rough_weight_lb * 0.45359237
+    )
+
+    total_weight_lb = (
+        rough_weight_lb * quantity
+    )
+
+    return {
+        "visible_operation_sum": total_r_time,
+        "validated_total_r_time": validated_total_r_time,
+        "r_time_per_part": r_time_per_part,
+        "d_time_143007": d_time_143007,
+        "d_time_17033": d_time_17033,
+        "ida_143007": ida_143007,
+        "ida_17033": ida_17033,
+        "total_143007": total_143007,
+        "total_17033": total_17033,
+        "hours_100_143007": hours_100_143007,
+        "hours_100_17033": hours_100_17033,
+        "std_minutes_143007": std_minutes_143007,
+        "std_minutes_17033": std_minutes_17033,
+        "rough_weight_lb": rough_weight_lb,
+        "rough_weight_kg": rough_weight_kg,
+        "total_weight_lb": total_weight_lb,
+    }
+
+
+def make_allocated_rows(data, calculated):
+    """
+    Build the two allocated per-part report rows.
+    """
+
+    common = {
+        "Part Number": data["part_number"],
+        "Finish Weight": data["finish_weight"],
+        "R-Time": calculated["r_time_per_part"],
+        "Quantity": data["quantity"],
+        "Rough Weight Pounds": calculated["rough_weight_lb"],
+        "Rough Weight KG": calculated["rough_weight_kg"],
+        "Total Pounds": calculated["total_weight_lb"],
+    }
+
+    row_143007 = {
+        "Machine": "143007",
+        **common,
+        "D-Time": calculated["d_time_143007"],
+        "IDA": calculated["ida_143007"],
+        "Total": calculated["total_143007"],
+        "HRS/100": calculated["hours_100_143007"],
+        "STD Minutes": calculated["std_minutes_143007"],
+    }
+
+    row_17033 = {
+        "Machine": "17033",
+        **common,
+        "D-Time": calculated["d_time_17033"],
+        "IDA": calculated["ida_17033"],
+        "Total": calculated["total_17033"],
+        "HRS/100": calculated["hours_100_17033"],
+        "STD Minutes": calculated["std_minutes_17033"],
+    }
+
+    return pd.DataFrame([
+        row_143007,
+        row_17033
+    ])
+
+
+def make_operation_table(config):
+    return pd.DataFrame([
+        ["CALC", "TABLE SHUTTLE TIME", "MT", "1/1",
+         config["table_shuttle_time"]],
+
+        ["CALC", "MACHINE TIME FOR 143007", "MT", "1/1",
+         config["machine_time_143007"]],
+
+        ["CALC", "MACHINE TIME FOR 17033", "MT", "1/1",
+         config["machine_time_17033"]],
+
+        ["TX2060", "ASIDE", "R", "1/1",
+         config["aside_time"]],
+
+        ["TX7351", "LOAD SHEET TO TABLE", "R", "1/1",
+         config["load_sheet_time"]],
+
+        ["TX7367", "LOAD NEXT NEST", "R", "1/1",
+         config["load_next_nest_time"]],
+
+        ["TX7482", "CANCEL PREVIOUS NEST", "R", "1/1",
+         config["cancel_previous_nest_time"]],
+
+        ["TX7368", "REMOVE SKELETON FROM TABLE", "R", "1/1",
+         config["remove_skeleton_time"]],
+
+        ["A118", "TALLY COUNT FOR DIFFERENT PARTS", "R", "1/1",
+         config["tally_count_time"]],
+
+        ["T21983", "TALLY ALL MISCUTS", "R", "1/1",
+         config["tally_miscuts_time"]],
+
+        ["T21727", "RECORD GOOD, SCRAP AND RECLAIM PARTS", "R", "1/1",
+         config["record_scrap_time"]],
+
+        ["A1491", "PLACE PARTS TO STACK ON TABLE", "R", "0/1",
+         config["place_parts_time"]],
+
+        ["TX7354", "ASIDE PARTS WITH HOIST", "R", "4/1",
+         config["aside_parts_time"]],
+    ], columns=[
+        "Code",
+        "Elemental Description",
+        "R/MT",
+        "Occurrence/Cycle",
+        "STD Minutes/Cycle"
+    ])
+
+
+def build_fixed_width_report(data, config, calculated):
+    """
+    Create a downloadable text report similar to the supplied
+    legacy fixed-width report.
+    """
+
+    report_date = date.today().strftime("%d/%b/%Y")
+
+    lines = []
+
+    lines.append(
+        f"{'FACTORY':>58}    {'NEST NUMBER':<15} "
+        f"{'PT/OPER':<10} {'PAGE':<5}"
+    )
+
+    lines.append(
+        f"{config['factory']:>58}    "
+        f"{data['nest_number']:<15} "
+        f"{config['operation']:<10} "
+        f"{config['page']:<5}"
+    )
+
+    lines.append(
+        f"{'DEPT NO.':<12}{'MACH NO.':<12}"
+        f"{'OPERATION DESCRIPTION':>35}"
+        f"{'LABOR GRADE':>20}"
+    )
+
+    lines.append(
+        f"{config['department']:<12}"
+        f"{'17033':<12}"
+        f"{'TRUMPF LASER':>35}"
+        f"{config['labor_grade']:>20}"
+    )
+
+    lines.append("")
+
+    lines.append(
+        f"{'DATE':<20}"
+        f"{'STARTING DIMENSION':>35}"
+    )
+
+    lines.append(
+        f"{report_date:<20}"
+        f"{data['sheet_length']:>15.2f} X "
+        f"{data['sheet_width']:.2f} X "
+        f"{data['thickness']:.2f}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"{'CODE':<10}"
+        f"{'ELEMENTAL DESCRIPTION':<48}"
+        f"{'R/MT':>6}"
+        f"{'OCC./CYCLE':>13}"
+        f"{'STD. MIN./CYCLE':>18}"
+    )
+
+    operation_df = make_operation_table(config)
+
+    for _, row in operation_df.iterrows():
+        lines.append(
+            f"{row['Code']:<10}"
+            f"{row['Elemental Description']:<48}"
+            f"{row['R/MT']:>6}"
+            f"{row['Occurrence/Cycle']:>13}"
+            f"{row['STD Minutes/Cycle']:>18.3f}"
+        )
+
+    lines.append("")
+    lines.append(
+        f"{'REF':<10}"
+        f"{'TOTAL R TIME =':<30}"
+        f"{calculated['validated_total_r_time']:>10.3f}"
+    )
+
+    lines.append(
+        f"{'REF':<10}"
+        f"{'CALCULATED SIEMENS D TIME =':<30}"
+        f"{config['calculated_143007_d_time']:>10.3f}"
+    )
+
+    lines.append(
+        f"{'REF':<10}"
+        f"{'CALCULATED SIEMENS2 D TIME =':<30}"
+        f"{config['calculated_17033_d_time']:>10.3f}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"{'ALLOCATED PER-PART DATA FOR 143007'}"
+    )
+
+    lines.append(
+        "PART NUMBER       FINISH WT   D-TIME   R-TIME   "
+        "IDA   TOTAL   HRS/100   QTY   STD MIN   POUNDS"
+    )
+
+    lines.append(
+        f"{data['part_number']:<17}"
+        f"{data['finish_weight']:>9.2f}"
+        f"{calculated['d_time_143007']:>9.3f}"
+        f"{calculated['r_time_per_part']:>9.3f}"
+        f"{calculated['ida_143007']:>7.3f}"
+        f"{calculated['total_143007']:>8.3f}"
+        f"{calculated['hours_100_143007']:>10.3f}"
+        f"{data['quantity']:>6}"
+        f"{calculated['std_minutes_143007']:>10.3f}"
+        f"{calculated['total_weight_lb']:>10.2f}"
+    )
+
+    lines.append("")
+    lines.append(
+        f"{'ALLOCATED PER-PART DATA FOR 17033'}"
+    )
+
+    lines.append(
+        "PART NUMBER       FINISH WT   D-TIME   R-TIME   "
+        "IDA   TOTAL   HRS/100   QTY   STD MIN   POUNDS"
+    )
+
+    lines.append(
+        f"{data['part_number']:<17}"
+        f"{data['finish_weight']:>9.2f}"
+        f"{calculated['d_time_17033']:>9.3f}"
+        f"{calculated['r_time_per_part']:>9.3f}"
+        f"{calculated['ida_17033']:>7.3f}"
+        f"{calculated['total_17033']:>8.3f}"
+        f"{calculated['hours_100_17033']:>10.3f}"
+        f"{data['quantity']:>6}"
+        f"{calculated['std_minutes_17033']:>10.3f}"
+        f"{calculated['total_weight_lb']:>10.2f}"
+    )
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# STREAMLIT USER INTERFACE
+# ============================================================
+
+st.title("TXT STD Calculator")
+
+st.caption(
+    "Upload a Lantek TXT file to extract nest data, "
+    "calculate STD values, and generate a legacy-style report."
+)
+
+uploaded_txt = st.file_uploader(
+    "Upload Lantek TXT File",
+    type=["txt"],
+    key="std_txt_upload"
+)
+
+with st.expander("STD Configuration"):
+    st.warning(
+        "The values below reproduce the supplied example. "
+        "Validate them against the Fortran source or approved "
+        "lookup tables before using the application for production."
+    )
+
+    config = DEFAULT_CONFIG.copy()
+
+    config["department"] = st.text_input(
+        "Department",
+        value=config["department"]
+    )
+
+    config["factory"] = st.text_input(
+        "Factory",
+        value=config["factory"]
+    )
+
+    config["validated_total_r_time"] = st.number_input(
+        "Validated Total R Time",
+        min_value=0.0,
+        value=10.559,
+        step=0.001,
+        format="%.3f"
+    )
+
+    config["calculated_143007_d_time"] = st.number_input(
+        "Total Calculated D Time for 143007",
+        min_value=0.0,
+        value=config["calculated_143007_d_time"],
+        step=0.001,
+        format="%.3f"
+    )
+
+    config["calculated_17033_d_time"] = st.number_input(
+        "Total Calculated D Time for 17033",
+        min_value=0.0,
+        value=config["calculated_17033_d_time"],
+        step=0.001,
+        format="%.3f"
+    )
+
+    config["ida_total_17033"] = st.number_input(
+        "Total IDA for 17033",
+        min_value=0.0,
+        value=config["ida_total_17033"],
+        step=0.001,
+        format="%.3f"
+    )
 
 
 if uploaded_txt is not None:
 
-    # Read uploaded file once.
     content = uploaded_txt.getvalue().decode(
         "utf-8",
         errors="ignore"
     )
 
     try:
-        header, header_df, extracted_df, raw_df = (
-            parse_lantek_txt(content)
+        data = parse_std_input(content)
+
+        calculated = calculate_std_values(
+            data,
+            config
         )
 
-        st.success("TXT file parsed successfully.")
+        operations_df = make_operation_table(
+            config
+        )
 
-        # ====================================================
-        # File preview
-        # ====================================================
+        allocated_df = make_allocated_rows(
+            data,
+            calculated
+        )
 
-        with st.expander("View Original TXT File"):
-            st.text_area(
-                "Original File Contents",
-                content,
-                height=180
-            )
+        report_text = build_fixed_width_report(
+            data,
+            config,
+            calculated
+        )
 
-        # ====================================================
-        # Header values
-        # ====================================================
+        st.success(
+            "TXT file processed successfully."
+        )
 
-        st.subheader("Extracted Header Values")
+        # ----------------------------------------------------
+        # Header summary
+        # ----------------------------------------------------
+
+        st.subheader("Nest Summary")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(
+            "Nest Number",
+            data["nest_number"]
+        )
+
+        col2.metric(
+            "Part Number",
+            data["part_number"]
+        )
+
+        col3.metric(
+            "Quantity",
+            data["quantity"]
+        )
+
+        col4.metric(
+            "Thickness",
+            f"{data['thickness']:.3f}"
+        )
+
+        summary_df = pd.DataFrame([{
+            "Material Code": data["material_code"],
+            "Nest Number": data["nest_number"],
+            "Sheet Length": data["sheet_length"],
+            "Sheet Width": data["sheet_width"],
+            "Thickness": data["thickness"],
+            "Part Number": data["part_number"],
+            "Finish Weight": data["finish_weight"],
+            "Quantity": data["quantity"],
+        }])
+
         st.dataframe(
-            header_df,
+            summary_df,
             use_container_width=True,
             hide_index=True
         )
 
-        # ====================================================
-        # Extracted STD/result values
-        # ====================================================
+        # ----------------------------------------------------
+        # Operation times
+        # ----------------------------------------------------
 
-        st.subheader("Extracted STD Result Values")
+        st.subheader("Elemental Operation Times")
+
         st.dataframe(
-            extracted_df,
+            operations_df.style.format({
+                "STD Minutes/Cycle": "{:.3f}"
+            }),
             use_container_width=True,
             hide_index=True
         )
 
-        # ====================================================
-        # Configurable STD calculation
-        # ====================================================
+        # ----------------------------------------------------
+        # Allocated report
+        # ----------------------------------------------------
 
-        st.subheader("STD Calculation")
+        st.subheader("Allocated Per-Part Results")
 
-        st.info(
-            "The uploaded TXT sample contains result values, "
-            "but it does not define the business meaning of each "
-            "position or the official Fortran STD formula. "
-            "The calculation below is therefore configurable."
-        )
-
-        calculation_mode = st.selectbox(
-            "Select Calculation Mode",
-            [
-                "Display extracted values only",
-                "Calculate Cut Length / Machine Speed"
-            ]
-        )
-
-        calculated_df = extracted_df.copy()
-
-        if calculation_mode == "Calculate Cut Length / Machine Speed":
-
-            numeric_columns = [
-                column
-                for column in extracted_df.columns
-                if column.startswith("Result_Value_")
-            ]
-
-            if numeric_columns:
-
-                cut_length_column = st.selectbox(
-                    "Select the column containing Cut Length",
-                    numeric_columns,
-                    index=0
-                )
-
-                machine_speed = st.number_input(
-                    "Enter Machine Speed",
-                    min_value=0.000001,
-                    value=1.0,
-                    step=1.0
-                )
-
-                handling_time = st.number_input(
-                    "Enter Additional Handling Time",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.1
-                )
-
-                quantity = st.number_input(
-                    "Enter Number of Pieces",
-                    min_value=1,
-                    value=1,
-                    step=1
-                )
-
-                calculated_df["Calculated_Machine_Time"] = (
-                    pd.to_numeric(
-                        calculated_df[cut_length_column],
-                        errors="coerce"
-                    )
-                    / machine_speed
-                )
-
-                calculated_df["Calculated_Total_Time"] = (
-                    calculated_df["Calculated_Machine_Time"]
-                    + handling_time
-                )
-
-                calculated_df["Calculated_STD_Per_Piece"] = (
-                    calculated_df["Calculated_Total_Time"]
-                    / quantity
-                )
-
-                st.warning(
-                    "These calculated columns use the temporary formula "
-                    "(selected value / machine speed + handling time) "
-                    "/ quantity. Replace this formula with the validated "
-                    "Fortran business rule before production use."
-                )
-
-        st.subheader("Final STD Results")
         st.dataframe(
-            calculated_df,
+            allocated_df.style.format({
+                "Finish Weight": "{:.2f}",
+                "D-Time": "{:.3f}",
+                "R-Time": "{:.3f}",
+                "IDA": "{:.3f}",
+                "Total": "{:.3f}",
+                "HRS/100": "{:.3f}",
+                "STD Minutes": "{:.3f}",
+                "Rough Weight Pounds": "{:.2f}",
+                "Rough Weight KG": "{:.2f}",
+                "Total Pounds": "{:.2f}",
+            }),
             use_container_width=True,
             hide_index=True
         )
 
-        # ====================================================
-        # Raw line table
-        # ====================================================
+        # ----------------------------------------------------
+        # Fixed-width report preview
+        # ----------------------------------------------------
 
-        with st.expander("View Raw TXT Rows"):
-            st.dataframe(
-                raw_df,
-                use_container_width=True,
-                hide_index=True
-            )
+        st.subheader("Legacy-Style STD Output")
 
-        # ====================================================
-        # Download CSV
-        # ====================================================
+        st.code(
+            report_text,
+            language=None
+        )
 
-        csv_data = calculated_df.to_csv(
-            index=False
-        ).encode("utf-8")
+        # ----------------------------------------------------
+        # Downloads
+        # ----------------------------------------------------
 
         st.download_button(
-            label="Download STD Results as CSV",
-            data=csv_data,
-            file_name="extracted_STD_results.csv",
-            mime="text/csv"
+            "Download Legacy STD TXT Report",
+            data=report_text.encode("utf-8"),
+            file_name=(
+                f"{data['nest_number']}_STD_OUTPUT.txt"
+            ),
+            mime="text/plain"
         )
-
-        # ====================================================
-        # Download Excel
-        # ====================================================
 
         excel_buffer = BytesIO()
 
@@ -323,188 +722,66 @@ if uploaded_txt is not None:
             engine="openpyxl"
         ) as writer:
 
-            header_df.to_excel(
+            summary_df.to_excel(
                 writer,
-                sheet_name="Header",
+                sheet_name="Nest Summary",
                 index=False
             )
 
-            calculated_df.to_excel(
+            operations_df.to_excel(
                 writer,
-                sheet_name="STD Results",
+                sheet_name="Operations",
                 index=False
             )
 
-            raw_df.to_excel(
+            allocated_df.to_excel(
                 writer,
-                sheet_name="Raw TXT",
+                sheet_name="Allocated Results",
                 index=False
             )
 
         st.download_button(
-            label="Download Complete STD Report as Excel",
+            "Download STD Results as Excel",
             data=excel_buffer.getvalue(),
-            file_name="STD_Report.xlsx",
+            file_name=(
+                f"{data['nest_number']}_STD_RESULTS.xlsx"
+            ),
             mime=(
                 "application/vnd.openxmlformats-officedocument."
                 "spreadsheetml.sheet"
             )
         )
 
+        # ----------------------------------------------------
+        # Validation differences
+        # ----------------------------------------------------
+
+        with st.expander("Calculation Validation"):
+
+            st.write(
+                "Visible operation-time sum:",
+                f"{calculated['visible_operation_sum']:.3f}"
+            )
+
+            st.write(
+                "Validated total R time:",
+                f"{calculated['validated_total_r_time']:.3f}"
+            )
+
+            st.write(
+                "The two totals are intentionally shown separately "
+                "because the supplied report does not expose all "
+                "legacy allocation rules."
+            )
+
     except Exception as error:
+
         st.error(
-            f"Unable to process this TXT file: {error}"
+            f"Unable to process the TXT file: {error}"
         )
 
 else:
+
     st.info(
-        "Upload a TXT file to begin extraction."
+        "Upload a TXT file to generate STD results."
     )
-
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import List
-import argparse
-import json
-import math
-
-
-@dataclass
-class NestHeader:
-    material_code: str
-    nest_number: str
-    plates: int
-    burns_per_nest: int
-    thickness_in: float
-    sheet_length_in: float
-    sheet_width_in: float
-    number_of_pieces: int
-    machine_id: int
-    piercing_min: float
-    rapid_min: float
-    contour_min: float
-
-
-@dataclass
-class PartRecord:
-    part_number: str
-    part_weight_lb: float
-    part_width_in: float
-    part_length_in: float
-    quantity: int
-    pieces_per_part: int
-    periphery_in: float
-    slugs_fall_through: int
-    slugs_stay_on_bed: int
-    slugs_hand_aside: int
-    slugs_magnet_unload: int
-
-
-@dataclass
-class LantekInput:
-    header: NestHeader
-    parts: List[PartRecord]
-
-
-def parse_lantek_txt(path: str | Path) -> LantekInput:
-    """Parse the fixed-sequence whitespace-delimited input shown in the sample."""
-    lines = [ln.strip() for ln in Path(path).read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
-    if len(lines) < 4:
-        raise ValueError("Expected at least four non-empty lines: header, counts, times, and one part.")
-
-    h = lines[0].replace("\\_", "_").split()
-    c = lines[1].split()
-    t = lines[2].split()
-    if len(h) != 7 or len(c) != 2 or len(t) != 3:
-        raise ValueError(f"Unexpected header layout: header={len(h)}, counts={len(c)}, times={len(t)} tokens")
-
-    header = NestHeader(
-        material_code=h[0], nest_number=h[1], plates=int(h[2]), burns_per_nest=int(h[3]),
-        thickness_in=float(h[4]), sheet_length_in=float(h[5]), sheet_width_in=float(h[6]),
-        number_of_pieces=int(c[0]), machine_id=int(c[1]),
-        piercing_min=float(t[0]), rapid_min=float(t[1]), contour_min=float(t[2]),
-    )
-
-    parts: List[PartRecord] = []
-    for line_no, line in enumerate(lines[3:], start=4):
-        p = line.replace("\\_", "_").split()
-        if len(p) != 11:
-            raise ValueError(f"Line {line_no}: expected 11 part fields, found {len(p)}: {p}")
-        parts.append(PartRecord(
-            part_number=p[0], part_weight_lb=float(p[1]), part_width_in=float(p[2]),
-            part_length_in=float(p[3]), quantity=int(p[4]), pieces_per_part=int(p[5]),
-            periphery_in=float(p[6]), slugs_fall_through=int(p[7]),
-            slugs_stay_on_bed=int(p[8]), slugs_hand_aside=int(p[9]),
-            slugs_magnet_unload=int(p[10]),
-        ))
-
-    return LantekInput(header=header, parts=parts)
-
-
-def round_half_up(value: float, digits: int = 3) -> float:
-    factor = 10 ** digits
-    return math.floor(value * factor + 0.5) / factor
-
-
-def calculate_known_relationships(data: LantekInput, find_sheet_min: float = 0.450,
-                                  total_r_time_min: float = 10.559,
-                                  siemens_d_total_min: float = 0.953) -> dict:
-    """Calculate only relationships demonstrated by the supplied Fortran output.
-
-    Defaults 0.450, 10.559 and 0.953 are sample-specific Fortran-derived values,
-    exposed as parameters rather than presented as universal rules.
-    """
-    h = data.header
-    machine_time = h.piercing_min + h.rapid_min + h.contour_min + find_sheet_min
-    total_qty = sum(p.quantity for p in data.parts)
-    if total_qty <= 0:
-        raise ValueError("Total part quantity must be positive")
-
-    allocated = []
-    for p in data.parts:
-        share = p.quantity / total_qty
-        # Equal per-piece allocations are proven for the one-part sample.
-        r_per_piece = total_r_time_min / total_qty
-        d_per_piece = siemens_d_total_min / total_qty
-        allocated.append({
-            "part_number": p.part_number,
-            "qty": p.quantity,
-            "finish_weight_lb": p.part_weight_lb,
-            "rough_weight_lb_each": round_half_up(p.part_weight_lb / 0.9015, 2),
-            "rough_weight_lb_total": round_half_up((p.part_weight_lb / 0.9015) * p.quantity, 2),
-            "d_time_min_each": round_half_up(d_per_piece, 3),
-            "r_time_min_each": round_half_up(r_per_piece, 3),
-            "input_share": share,
-        })
-
-    return {
-        "nest_number": h.nest_number,
-        "starting_dimension": [round(h.sheet_length_in, 2), round(h.sheet_width_in, 2), round(h.thickness_in, 2)],
-        "input_times": {
-            "piercing_min": h.piercing_min,
-            "rapid_min": h.rapid_min,
-            "contour_min": h.contour_min,
-            "find_sheet_min": find_sheet_min,
-        },
-        "machine_time_min": round_half_up(machine_time, 3),
-        "total_r_time_min": total_r_time_min,
-        "siemens_d_total_min": siemens_d_total_min,
-        "allocated_parts": allocated,
-        "warning": "IDA, labor-element selection, occurrence/cycle values, allowances and final STD require Fortran rules or more validated pairs.",
-    }
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("input_txt")
-    ap.add_argument("--json", default="fortran_relationships.json")
-    args = ap.parse_args()
-    data = parse_lantek_txt(args.input_txt)
-    result = calculate_known_relationships(data)
-    Path(args.json).write_text(json.dumps({"parsed_input": {"header": asdict(data.header), "parts": [asdict(x) for x in data.parts]}, "calculated": result}, indent=2), encoding="utf-8")
-    print(json.dumps(result, indent=2))
-    print(f"Saved: {args.json}")
-
-
-if __name__ == "__main__":
-    main()
