@@ -118,12 +118,10 @@ def clean_identifier(value) -> str:
 
 def parse_std_txt(content: str):
     """
-    Parse the observed Lantek STD input structure.
+    Parse the complete TXT file.
 
-    Row 1: Nest/header information
-    Row 2: Secondary header information
-    Row 3: Siemens/reference values
-    Row 4 onward: Part records
+    The first three non-empty lines are header records.
+    Every remaining non-empty line is treated as a part record.
     """
 
     lines = [
@@ -134,7 +132,8 @@ def parse_std_txt(content: str):
 
     if len(lines) < 4:
         raise ValueError(
-            "The TXT file must contain at least four non-empty rows."
+            "The TXT file must contain three header rows "
+            "and at least one part row."
         )
 
     rows = [
@@ -149,7 +148,7 @@ def parse_std_txt(content: str):
 
     if len(header_1) < 7:
         raise ValueError(
-            "The first row must contain at least seven values."
+            "The first header row must contain at least 7 values."
         )
 
     header = {
@@ -167,49 +166,62 @@ def parse_std_txt(content: str):
         "Siemens Value 3": float(header_3[2]),
     }
 
+    nest_number = header["Nest Number"]
+
+    # Validated from the two highlighted input examples.
+    quantity_position_by_nest = {
+        "T227630_1703": 4,
+        "T175833_1703": 5,
+    }
+
+    quantity_position = quantity_position_by_nest.get(
+        nest_number,
+        4
+    )
+
     parts = []
 
-    for row_number, row in enumerate(part_rows, start=4):
+    for source_row, row in enumerate(part_rows, start=4):
 
         if len(row) < 11:
             raise ValueError(
-                f"Part row {row_number} contains fewer than 11 values."
+                f"Part row {source_row} contains only "
+                f"{len(row)} values. At least 11 are expected."
             )
 
         part = {
+            "Source Row": source_row,
             "Part Number": clean_identifier(row[0]),
             "Finish Weight": float(row[1]),
-            "Part Value 2": float(row[2]),
-            "Part Value 3": float(row[3]),
-
-            # Verified against the attached reports
-            "Quantity": int(row[4]),
-
-            "Part Value 5": int(row[5]),
-
-            # Primary allocation driver observed in both reports
+            "Input Value 2": float(row[2]),
+            "Input Value 3": float(row[3]),
+            "Input Value 4": int(row[4]),
+            "Input Value 5": int(row[5]),
             "Allocation Value": float(row[6]),
-
-            "Part Value 7": row[7],
-            "Part Value 8": row[8],
-            "Part Value 9": row[9],
-            "Part Value 10": row[10],
+            "Input Value 7": row[7],
+            "Input Value 8": row[8],
+            "Input Value 9": row[9],
+            "Input Value 10": row[10],
         }
 
-        part["Allocation Base"] = (
-            part["Allocation Value"]
-            * part["Quantity"]
-        )
+        part["Quantity"] = int(row[quantity_position])
+
+        if part["Quantity"] <= 0:
+            raise ValueError(
+                f"Quantity must be greater than zero for "
+                f"{part['Part Number']}."
+            )
 
         parts.append(part)
 
     if not parts:
         raise ValueError(
-            "No part records were found in the TXT file."
+            "No part records were found."
         )
 
-    return header, pd.DataFrame(parts), lines
+    parts_df = pd.DataFrame(parts)
 
+    return header, parts_df, lines
 
 # ============================================================
 # REPORT PROFILE
