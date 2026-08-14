@@ -92,9 +92,10 @@ VALIDATED_PROFILES = {
 # ============================================================
 
 def split_fields(line: str) -> list:
-    """Split whitespace or fixed-width records."""
+    """
+    Split whitespace or fixed-width records.
+    """
     return re.split(r"\s+", line.strip())
-
 
 def to_number(value: str):
     """Convert numeric text to int or float."""
