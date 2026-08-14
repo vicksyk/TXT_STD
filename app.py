@@ -263,112 +263,230 @@ def get_profile(nest_number: str):
 # ALLOCATION LOGIC
 # ============================================================
 
-def allocate_pool_per_part(
+def allocate_pool_total_by_part(
     parts_df: pd.DataFrame,
     total_pool: float
 ) -> pd.Series:
     """
-    Allocate a total time or cost pool to each part.
+    Allocate a total pool across every part row.
 
-    Per-part allocation =
-    total pool × allocation value ÷
-    sum(allocation value × quantity)
+    Allocation is weighted by:
+    Allocation Value × Quantity
     """
 
-    total_base = parts_df["Allocation Base"].sum()
+    allocation_base = (
+        parts_df["Allocation Value"]
+        * parts_df["Quantity"]
+    )
+
+    total_base = allocation_base.sum()
 
     if total_base <= 0:
         raise ValueError(
-            "Total allocation base must be greater than zero."
+            "The total allocation base must be greater than zero."
         )
 
     return (
         total_pool
-        * parts_df["Allocation Value"]
+        * allocation_base
         / total_base
     )
+
+
+def convert_total_to_single_piece(
+    allocated_total: pd.Series,
+    quantities: pd.Series
+) -> pd.Series:
+    """
+    Divide each allocated row total by its highlighted quantity
+    to produce the result for one piece.
+    """
+
+    safe_quantities = quantities.where(
+        quantities > 0
+    )
+
+    if safe_quantities.isna().any():
+        raise ValueError(
+            "Every part quantity must be greater than zero."
+        )
+
+    return allocated_total / safe_quantities
 
 
 def calculate_allocated_results(
     parts_df: pd.DataFrame,
     profile: dict
 ):
-    """Create allocated results for both machine sections."""
+    """
+    Allocate each time pool across all part rows.
 
-    result_143007 = parts_df.copy()
-    result_17033 = parts_df.copy()
+    The allocated row total is divided by the highlighted
+    quantity so displayed times represent one piece.
+    """
 
-    # --------------------------------------------------------
-    # Machine 143007
-    # --------------------------------------------------------
+    base_df = parts_df.copy()
 
-    result_143007["Machine"] = "143007"
+    base_df["Allocation Base"] = (
+        base_df["Allocation Value"]
+        * base_df["Quantity"]
+    )
 
-    result_143007["D-Time"] = allocate_pool_per_part(
-        parts_df,
+    # ========================================================
+    # Allocate complete pools to every part row
+    # ========================================================
+
+    total_r_by_row = allocate_pool_total_by_part(
+        base_df,
+        profile["total_r_time"]
+    )
+
+    total_d_143007_by_row = allocate_pool_total_by_part(
+        base_df,
         profile["total_d_time_143007"]
     )
 
-    result_143007["R-Time"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_r_time"]
+    total_d_17033_by_row = allocate_pool_total_by_part(
+        base_df,
+        profile["total_d_time_17033"]
+    )
+
+    total_ida_17033_by_row = allocate_pool_total_by_part(
+        base_df,
+        profile["total_ida_17033"]
+    )
+
+    total_hrs_143007_by_row = allocate_pool_total_by_part(
+        base_df,
+        profile["total_hours_100_143007"]
+    )
+
+    total_hrs_17033_by_row = allocate_pool_total_by_part(
+        base_df,
+        profile["total_hours_100_17033"]
+    )
+
+    # ========================================================
+    # Machine 143007, single-piece values
+    # ========================================================
+
+    result_143007 = base_df.copy()
+    result_143007["Machine"] = "143007"
+
+    result_143007["D-Time"] = convert_total_to_single_piece(
+        total_d_143007_by_row,
+        result_143007["Quantity"]
+    )
+
+    result_143007["R-Time"] = convert_total_to_single_piece(
+        total_r_by_row,
+        result_143007["Quantity"]
     )
 
     result_143007["IDA"] = 0.0
 
-    result_143007["Total"] = (
+    result_143007["Total Per Piece"] = (
         result_143007["D-Time"]
         + result_143007["R-Time"]
         + result_143007["IDA"]
     )
 
-    result_143007["HRS/100"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_hours_100_143007"]
+    result_143007["HRS/100"] = (
+        convert_total_to_single_piece(
+            total_hrs_143007_by_row,
+            result_143007["Quantity"]
+        )
     )
 
-    result_143007["STD Minutes"] = (
-        result_143007["Total"]
+    result_143007["Total for Quantity"] = (
+        result_143007["Total Per Piece"]
         * result_143007["Quantity"]
     )
 
-    # --------------------------------------------------------
-    # Machine 17033
-    # --------------------------------------------------------
+    # ========================================================
+    # Machine 17033, single-piece values
+    # ========================================================
 
+    result_17033 = base_df.copy()
     result_17033["Machine"] = "17033"
 
-    result_17033["D-Time"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_d_time_17033"]
+    result_17033["D-Time"] = convert_total_to_single_piece(
+        total_d_17033_by_row,
+        result_17033["Quantity"]
     )
 
-    result_17033["R-Time"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_r_time"]
+    result_17033["R-Time"] = convert_total_to_single_piece(
+        total_r_by_row,
+        result_17033["Quantity"]
     )
 
-    result_17033["IDA"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_ida_17033"]
+    result_17033["IDA"] = convert_total_to_single_piece(
+        total_ida_17033_by_row,
+        result_17033["Quantity"]
     )
 
-    result_17033["Total"] = (
+    result_17033["Total Per Piece"] = (
         result_17033["D-Time"]
         + result_17033["R-Time"]
         + result_17033["IDA"]
     )
 
-    result_17033["HRS/100"] = allocate_pool_per_part(
-        parts_df,
-        profile["total_hours_100_17033"]
+    result_17033["HRS/100"] = (
+        convert_total_to_single_piece(
+            total_hrs_17033_by_row,
+            result_17033["Quantity"]
+        )
     )
 
-    result_17033["STD Minutes"] = (
-        result_17033["Total"]
+    result_17033["Total for Quantity"] = (
+        result_17033["Total Per Piece"]
         * result_17033["Quantity"]
     )
 
+    # ========================================================
+    # Weight outputs
+    # ========================================================
+
+    for result_df in [
+        result_143007,
+        result_17033
+    ]:
+        result_df["Rough Weight Pounds"] = (
+            result_df["Finish Weight"]
+        )
+
+        result_df["Rough Weight KG"] = (
+            result_df["Rough Weight Pounds"]
+            * 0.45359237
+        )
+
+        result_df["Total Pounds"] = (
+            result_df["Rough Weight Pounds"]
+            * result_df["Quantity"]
+        )
+
+    output_columns = [
+        "Machine",
+        "Part Number",
+        "Finish Weight",
+        "D-Time",
+        "R-Time",
+        "IDA",
+        "Total Per Piece",
+        "HRS/100",
+        "Rough Weight Pounds",
+        "Rough Weight KG",
+        "Quantity",
+        "Total for Quantity",
+        "Total Pounds",
+        "Allocation Value",
+        "Allocation Base",
+    ]
+
+    return (
+        result_143007[output_columns],
+        result_17033[output_columns]
+    )
     # --------------------------------------------------------
     # Weight handling
     #
