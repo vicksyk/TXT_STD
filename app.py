@@ -666,3 +666,8 @@ if uploaded_txt is not None:
                     format="%.3f"
                 )
             )
+
+    except Exception as error:
+        st.error(
+            f"Unable to process the TXT file: {error}"
+        )
